@@ -24,7 +24,7 @@ This module provides functions to control windows processes. ReadProcessMemory W
 	var someOffset = 0x...
 	var multiPtr = notepad.readMultiLevelPointerMemory(someAddress, someOffset, ...);
 	
-	notepad.inject("some.dll");
+	notepad.inject("some_reflective.dll");		//Load a dll using the reflective method
 	
 	setTimeout(function(){
 		notepad.terminate();
