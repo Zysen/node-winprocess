@@ -299,14 +299,10 @@ void WinProcess::Inject(const FunctionCallbackInfo<Value>& args) {
 	DWORD dwBytesRead     = 0;
 	TOKEN_PRIVILEGES priv = {0};
 
-	v8::String::Utf8Value dllName3(args[1]->ToString());
+	v8::String::Utf8Value dllName3(args[0]->ToString());
 	std::string dllName2 = std::string(*dllName3);
 	const char * cpDllFile = dllName2.c_str();
 
-	v8::String::Utf8Value procid4(args[0]->ToString());
-	std::string procid3 = std::string(*procid4);
-	int procid2 = atoi(procid3.c_str());
-	DWORD dwProcessId = (DWORD) procid2;
 
 	do
 	{
@@ -334,11 +330,11 @@ void WinProcess::Inject(const FunctionCallbackInfo<Value>& args) {
 			}
 			CloseHandle( hToken );
 		}
-		//hProcess = OpenProcess( PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, dwProcessId );
+		//hProcess = OpenProcess( PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, obj->_pid );
 		if( !obj->_handle ){BREAK_WITH_ERROR( "Failed to open the target process" );}
 		hModule = LoadRemoteLibraryR( obj->_handle, lpBuffer, dwLength, NULL );
 		if( !hModule ){BREAK_WITH_ERROR( "Failed to inject the DLL" );}
-		printf( "[+] Injected the '%s' DLL into process %d.", cpDllFile, dwProcessId );
+		printf( "[+] Injected the '%s' DLL into process %d.", cpDllFile, obj->_pid );
 		WaitForSingleObject( hModule, -1 );
 	} while( 0 );
 
