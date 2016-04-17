@@ -9,19 +9,24 @@ This module provides functions to control windows processes. ReadProcessMemory W
 ---------------
 	var winprocess = require('winprocess');
 	
-	setInterval(function(){
-		console.log(winprocess.getActiveWindowName());
-	}, 333);
-	
-	var pid = winprocess.getProcessId("notepad++.exe");
-	var notepad = new winprocess.Process(pid);
-	var address = 0x076F97C0;
-	
-	var testBuffer = new Buffer("SWT");
-	notepad.open();
-	notepad.writeMemory(address, testBuffer);
-	var memory = notepad.readMemory(address, 3);
-	console.log(testBuffer.equals(memory)?"PASS":"FAIL");
-	notepad.close();
-	
+	var activeWindow = winprocess.getActiveWindowName();
+	var pid = winprocess.getProcessId("notepad++.exe");	// or winprocess.getProcessIdByWindow("");
 
+	var notepad = new winprocess.Process(pid);
+	notepad.open();
+	
+	var baseAddress = notepad.getBaseAddress();
+	
+	var someAddress = 0x........
+	notepad.writeMemory(someAddress, new Buffer([0x0]));
+	var memBuffer = notepad.readMemory(someAddress, 3);
+	
+	var someOffset = 0x...
+	var multiPtr = notepad.readMultiLevelPointerMemory(someAddress, someOffset, ...);
+	
+	notepad.inject("some.dll");
+	
+	setTimeout(function(){
+		notepad.terminate();
+		notepad.close();
+	}, 1000);
