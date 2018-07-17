@@ -46,34 +46,43 @@ void EnableDebugPriv()
     CloseHandle(hToken);
 }
 
-DWORD GetModuleBase(HANDLE hProc, std::string &sModuleName)
+DWORD_PTR GetProcessBaseAddress(HANDLE processHandle)
 {
-	EnableDebugPriv();
-   HMODULE *hModules;
-   char szBuf[50];
-   DWORD cModules;
-   DWORD dwBase = -1;
-   //------
+    DWORD_PTR   baseAddress = 0;
+    //HANDLE      processHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processID);
+    HMODULE     *moduleArray;
+    LPBYTE      moduleArrayBytes;
+    DWORD       bytesRequired;
 
-   EnumProcessModules(hProc, hModules, 0, &cModules);
-   hModules = new HMODULE[cModules/sizeof(HMODULE)];
+    if ( processHandle )
+    {
+        if ( EnumProcessModules( processHandle, NULL, 0, &bytesRequired ) )
+        {
+            if ( bytesRequired )
+            {
+                moduleArrayBytes = (LPBYTE)LocalAlloc( LPTR, bytesRequired );
 
-   if(EnumProcessModules(hProc, hModules, cModules/sizeof(HMODULE), &cModules)) {
-      for(int i = 0; i < cModules/sizeof(HMODULE); i++) {
-         if(GetModuleBaseName(hProc, hModules[i], szBuf, sizeof(szBuf))) {
-            if(sModuleName.compare(szBuf) == 0) {
+                if ( moduleArrayBytes )
+                {
+                    unsigned int moduleCount;
 
-               //break;
+                    moduleCount = bytesRequired / sizeof( HMODULE );
+                    moduleArray = (HMODULE *)moduleArrayBytes;
+
+                    if ( EnumProcessModules( processHandle, moduleArray, bytesRequired, &bytesRequired ) )
+                    {
+                        baseAddress = (DWORD_PTR)moduleArray[0];
+                    }
+
+                    LocalFree( moduleArrayBytes );
+                }
             }
-            dwBase = (DWORD)hModules[i];
-                           std::cout<<"module " << std::hex << szBuf << ": " <<dwBase<<"\n";
-         }
-      }
-   }
+        }
 
-   delete[] hModules;
+        CloseHandle( processHandle );
+    }
 
-   return dwBase;
+    return baseAddress;
 }
 
 std::string GetLastErrorAsString()
@@ -350,12 +359,8 @@ void WinProcess::getBaseAddress(const FunctionCallbackInfo<Value>& args)
     HandleScope scope(isolate); 
     WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());
 	if(obj->_handle){
-		
-		v8::String::Utf8Value param1(args[1]->ToString());
-		std::string processName = std::string(*param1);
-		
-		DWORD BaseAddr2 = GetModuleBase(obj->_handle, processName);
-		args.GetReturnValue().Set(Number::New(isolate, (int)BaseAddr2));
+		DWORD_PTR bAddr = GetProcessBaseAddress(obj->_handle);
+		args.GetReturnValue().Set(Number::New(isolate, bAddr));
 	}
 }
  
@@ -370,63 +375,4 @@ void WinProcess::Close(const FunctionCallbackInfo<Value>& args)
     }
 }
 
-
-/*
-
-//You read module information like this..
-MODULEENTRY32 GetModuleInfo(int ProcessID, const char* ModuleName)
-{
-    void* hSnap = nullptr;
-    MODULEENTRY32 Mod32 = {0};
-
-    if ((hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, ProcessID)) == INVALID_HANDLE_VALUE)
-        return Mod32;
-
-    Mod32.dwSize = sizeof(MODULEENTRY32);
-    while (Module32Next(hSnap, &Mod32))
-    {
-        if (!strcompare(ModuleName, Mod32.szModule, false))
-        {
-            CloseHandle(hSnap);
-            return Mod32;
-        }
-    }
-
-    CloseHandle(hSnap);
-    return Mod32;
-}
-
-DWORD GetModuleBaseAddress(DWORD iProcId, const char* DLLName)
-{
-	HANDLE hSnap; // Process snapshot handle.
-	MODULEENTRY32 xModule; // Module information structure.
-	hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, iProcId); // Creates a module
-	xModule.dwSize = sizeof(MODULEENTRY32); // Needed for Module32First/Next to work.
-
-	if (Module32First(hSnap, &xModule)) // Gets the first module.
-	{
-		if (strcmp(xModule.szModule, DLLName) == 0) // If this is the module we want...
-		{
-			CloseHandle(hSnap); // Free the handle.
-			return (DWORD)xModule.modBaseAddr; // return the base address.
-		}
-
-		while (Module32Next(hSnap, &xModule)) // Loops through the rest of the modules.
-		{
-			if (strcmp(xModule.szModule, DLLName) == 0) // If this is the module we want...
-			{
-				CloseHandle(hSnap); // Free the handle.
-
-				return (DWORD)xModule.modBaseAddr; // return the base address.
-
-			}
-		}
-	}
-
-	CloseHandle(hSnap); // Free the handle.
-
-	return 0; // If the result of the function is 0, it didn't find the base address.
-}
-
-*/
 NODE_MODULE(addon, WinProcess::Init)

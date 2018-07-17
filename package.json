@@ -3,16 +3,18 @@
   "version": "0.0.2",
   "description": "Node Binding for ReadProcessMemory and WriteProcessMemory.",
   "keywords": [
-    "WriteProcessMemory", "ReadProcessMemory"
+    "WriteProcessMemory",
+    "ReadProcessMemory"
   ],
-  "license":"MIT",
-  "os" : [ "win32"],
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
   "main": "winprocess.js",
   "private": false,
   "gypfile": true,
-  "repository" :
-  {
-  "type" : "git",
-  "url" : "https://github.com/Zysen/node-winprocess"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zysen/node-winprocess"
   }
 }
