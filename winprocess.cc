@@ -171,6 +171,7 @@ Isolate* isolate = Isolate::GetCurrent();
   NODE_SET_PROTOTYPE_METHOD(tpl, "readMemory", ReadMemory);
   NODE_SET_PROTOTYPE_METHOD(tpl, "writeMemory", WriteMemory);
   NODE_SET_PROTOTYPE_METHOD(tpl, "inject", Inject);
+  NODE_SET_PROTOTYPE_METHOD(tpl, "injectReflective", InjectReflective);
   NODE_SET_PROTOTYPE_METHOD(tpl, "terminate", Terminate);
   NODE_SET_PROTOTYPE_METHOD(tpl, "readMultiLevelPointerMemory", ReadMultiLevelPointerMemory);
   NODE_SET_PROTOTYPE_METHOD(tpl, "getBaseAddress", getBaseAddress);
@@ -294,7 +295,71 @@ void WinProcess::WriteMemory(const FunctionCallbackInfo<Value>& args) {
 	}
 }
 
+/* Load DLL into remote process
+* Gets LoadLibraryA address from current process, which is guaranteed to be same for single boot session across processes
+* Allocated memory in remote process for DLL path name
+* CreateRemoteThread to run LoadLibraryA in remote process. Address of DLL path in remote memory as argument
+*/
 void WinProcess::Inject(const FunctionCallbackInfo<Value>& args) {
+	Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+	WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());
+	
+	v8::String::Utf8Value dllPathUtf8(args[0]->ToString());   
+    std::string dllPath = std::string(*dllPathUtf8);
+	
+	HANDLE handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, obj->_pid);		//TODO There is no need to open the handle again. Use obj->_handle.	(This didnt just work out of the box).
+	//HANDLE handle = obj->_handle;
+	
+	if( !handle ){
+		//printf( "Failed to open the target process" );
+		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Failed to open the target process.")));
+		args.GetReturnValue().Set(Number::New(isolate, 0));
+		return;
+	}
+	
+	LPVOID dllPathAddressInRemoteMemory = VirtualAllocEx(handle, NULL, dllPath.size(), MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	if (dllPathAddressInRemoteMemory == NULL) {
+		//printf("[---] VirtualAllocEx unsuccessful. %d \n", GetLastError());
+		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "VirtualAllocEx unsuccessful.")));
+		args.GetReturnValue().Set(Number::New(isolate, 0));
+		return;
+	}
+
+	// Write DLL's path name to remote process
+	BOOL succeededWriting = WriteProcessMemory(handle, dllPathAddressInRemoteMemory, dllPath.c_str(), dllPath.size(), NULL);
+
+	if (!succeededWriting) {
+		//printf("[---] WriteProcessMemory unsuccessful. %d\n", GetLastError());
+		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "WriteProcessMemory unsuccessful.")));
+		args.GetReturnValue().Set(Number::New(isolate, 0));
+		return;
+	} else {
+		// Returns a pointer to the LoadLibrary address. This will be the same on the remote process as in our current process.
+		LPVOID loadLibraryAddress = (LPVOID)GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
+		if (loadLibraryAddress == NULL) {
+			//printf("[---] LoadLibrary not found in process. %d\n", GetLastError());
+			isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "LoadLibrary not found in process.")));
+			args.GetReturnValue().Set(Number::New(isolate, 0));
+			return;
+		} else {
+			HANDLE remoteThread = CreateRemoteThread(handle, NULL, NULL, (LPTHREAD_START_ROUTINE)loadLibraryAddress, dllPathAddressInRemoteMemory, NULL, NULL);
+			if (remoteThread == NULL) {
+				//printf("[---] CreateRemoteThread unsuccessful. %d\n", GetLastError());
+				isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "CreateRemoteThread unsuccessful.")));
+				args.GetReturnValue().Set(Number::New(isolate, 0));
+				return;
+			}
+		}
+	}
+
+	CloseHandle(handle);
+	args.GetReturnValue().Set(Number::New(isolate, 1));
+}
+
+
+
+void WinProcess::InjectReflective(const FunctionCallbackInfo<Value>& args) {
  	Isolate* isolate = args.GetIsolate();  
  	HandleScope scope(isolate); 
     WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());

@@ -23,6 +23,7 @@ class WinProcess : public node::ObjectWrap {
   static void WriteMemory(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void ReadMultiLevelPointerMemory(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Inject(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void InjectReflective(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void getBaseAddress(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Terminate(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
