@@ -1,6 +1,6 @@
 {
   "name": "winprocess",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Node Binding for ReadProcessMemory and WriteProcessMemory.",
   "keywords": [
     "WriteProcessMemory",
