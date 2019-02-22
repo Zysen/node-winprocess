@@ -46,43 +46,55 @@ void EnableDebugPriv()
     CloseHandle(hToken);
 }
 
-DWORD_PTR GetProcessBaseAddress(HANDLE processHandle)
+void EnableDebugPrivNode(const FunctionCallbackInfo<Value>& args) {
+ 	Isolate* isolate = args.GetIsolate();  
+ 	EnableDebugPriv();
+}
+
+DWORD GetModuleBase32(HANDLE hProc, std::string &sModuleName)
 {
-    DWORD_PTR   baseAddress = 0;
-    //HANDLE      processHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processID);
-    HMODULE     *moduleArray;
-    LPBYTE      moduleArrayBytes;
-    DWORD       bytesRequired;
+	EnableDebugPriv();
+	HMODULE *hModules;
+	char szBuf[50];
+	DWORD cModules;
+	DWORD dwBase = -1;
+	EnumProcessModules(hProc, hModules, 0, &cModules);
+	hModules = new HMODULE[cModules/sizeof(HMODULE)];
+	if(EnumProcessModules(hProc, hModules, cModules/sizeof(HMODULE), &cModules)) {
+		for(int i = 0; i < cModules/sizeof(HMODULE); i++) {
+			if(GetModuleBaseName(hProc, hModules[i], szBuf, sizeof(szBuf))) {
+				if(sModuleName.compare(szBuf) == 0 && (DWORD)hModules[i]>0) {
+					dwBase = (DWORD)hModules[i];
+					break;
+				}
+			}
+		}
+	}
+	delete[] hModules;
+	return dwBase;
+}
 
-    if ( processHandle )
-    {
-        if ( EnumProcessModules( processHandle, NULL, 0, &bytesRequired ) )
-        {
-            if ( bytesRequired )
-            {
-                moduleArrayBytes = (LPBYTE)LocalAlloc( LPTR, bytesRequired );
-
-                if ( moduleArrayBytes )
-                {
-                    unsigned int moduleCount;
-
-                    moduleCount = bytesRequired / sizeof( HMODULE );
-                    moduleArray = (HMODULE *)moduleArrayBytes;
-
-                    if ( EnumProcessModules( processHandle, moduleArray, bytesRequired, &bytesRequired ) )
-                    {
-                        baseAddress = (DWORD_PTR)moduleArray[0];
-                    }
-
-                    LocalFree( moduleArrayBytes );
-                }
-            }
-        }
-
-        CloseHandle( processHandle );
-    }
-
-    return baseAddress;
+UINT64 GetModuleBase64(HANDLE hProc, std::string &sModuleName)
+{
+	EnableDebugPriv();
+	HMODULE *hModules;
+	char szBuf[50];
+	DWORD cModules;
+	UINT64 dwBase = -1;
+	EnumProcessModules(hProc, hModules, 0, &cModules);
+	hModules = new HMODULE[cModules/sizeof(HMODULE)];
+	if(EnumProcessModules(hProc, hModules, cModules/sizeof(HMODULE), &cModules)) {
+		for(int i = 0; i < cModules/sizeof(HMODULE); i++) {
+			if(GetModuleBaseName(hProc, hModules[i], szBuf, sizeof(szBuf))) {
+				if(sModuleName.compare(szBuf) == 0 && (DWORD)hModules[i]>0) {
+					dwBase = (UINT64)hModules[i];
+					break;
+				}
+			}
+		}
+	}
+	delete[] hModules;
+	return dwBase;
 }
 
 std::string GetLastErrorAsString()
@@ -171,18 +183,24 @@ Isolate* isolate = Isolate::GetCurrent();
   NODE_SET_PROTOTYPE_METHOD(tpl, "readMemory", ReadMemory);
   NODE_SET_PROTOTYPE_METHOD(tpl, "writeMemory", WriteMemory);
   NODE_SET_PROTOTYPE_METHOD(tpl, "inject", Inject);
-  NODE_SET_PROTOTYPE_METHOD(tpl, "injectReflective", InjectReflective);
   NODE_SET_PROTOTYPE_METHOD(tpl, "terminate", Terminate);
   NODE_SET_PROTOTYPE_METHOD(tpl, "readMultiLevelPointerMemory", ReadMultiLevelPointerMemory);
-  NODE_SET_PROTOTYPE_METHOD(tpl, "getBaseAddress", getBaseAddress);
+  if(sizeof(ULONG)==8){
+	  NODE_SET_PROTOTYPE_METHOD(tpl, "getBaseAddress", getBaseAddress64);
+  }
+  else{
+	NODE_SET_PROTOTYPE_METHOD(tpl, "getBaseAddress", getBaseAddress32);
+  }
   NODE_SET_PROTOTYPE_METHOD(tpl, "close", Close);
-  
   
   constructor.Reset(isolate, tpl->GetFunction());
   exports->Set(String::NewFromUtf8(isolate, "Process"),tpl->GetFunction());
   NODE_SET_METHOD(exports, "getProcessId", getProcessIdNode);
   NODE_SET_METHOD(exports, "getProcessIdByWindow", getProcessIdByWindow);
   NODE_SET_METHOD(exports, "getActiveWindowName", getActiveWindowName);
+  NODE_SET_METHOD(exports, "enableDebugPriv", EnableDebugPrivNode);
+  
+  
 }
 
 void WinProcess::New(const FunctionCallbackInfo<Value>& args) {
@@ -295,71 +313,7 @@ void WinProcess::WriteMemory(const FunctionCallbackInfo<Value>& args) {
 	}
 }
 
-/* Load DLL into remote process
-* Gets LoadLibraryA address from current process, which is guaranteed to be same for single boot session across processes
-* Allocated memory in remote process for DLL path name
-* CreateRemoteThread to run LoadLibraryA in remote process. Address of DLL path in remote memory as argument
-*/
 void WinProcess::Inject(const FunctionCallbackInfo<Value>& args) {
-	Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope(isolate);
-	WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());
-	
-	v8::String::Utf8Value dllPathUtf8(args[0]->ToString());   
-    std::string dllPath = std::string(*dllPathUtf8);
-	
-	HANDLE handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, obj->_pid);		//TODO There is no need to open the handle again. Use obj->_handle.	(This didnt just work out of the box).
-	//HANDLE handle = obj->_handle;
-	
-	if( !handle ){
-		//printf( "Failed to open the target process" );
-		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Failed to open the target process.")));
-		args.GetReturnValue().Set(Number::New(isolate, 0));
-		return;
-	}
-	
-	LPVOID dllPathAddressInRemoteMemory = VirtualAllocEx(handle, NULL, dllPath.size(), MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-	if (dllPathAddressInRemoteMemory == NULL) {
-		//printf("[---] VirtualAllocEx unsuccessful. %d \n", GetLastError());
-		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "VirtualAllocEx unsuccessful.")));
-		args.GetReturnValue().Set(Number::New(isolate, 0));
-		return;
-	}
-
-	// Write DLL's path name to remote process
-	BOOL succeededWriting = WriteProcessMemory(handle, dllPathAddressInRemoteMemory, dllPath.c_str(), dllPath.size(), NULL);
-
-	if (!succeededWriting) {
-		//printf("[---] WriteProcessMemory unsuccessful. %d\n", GetLastError());
-		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "WriteProcessMemory unsuccessful.")));
-		args.GetReturnValue().Set(Number::New(isolate, 0));
-		return;
-	} else {
-		// Returns a pointer to the LoadLibrary address. This will be the same on the remote process as in our current process.
-		LPVOID loadLibraryAddress = (LPVOID)GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
-		if (loadLibraryAddress == NULL) {
-			//printf("[---] LoadLibrary not found in process. %d\n", GetLastError());
-			isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "LoadLibrary not found in process.")));
-			args.GetReturnValue().Set(Number::New(isolate, 0));
-			return;
-		} else {
-			HANDLE remoteThread = CreateRemoteThread(handle, NULL, NULL, (LPTHREAD_START_ROUTINE)loadLibraryAddress, dllPathAddressInRemoteMemory, NULL, NULL);
-			if (remoteThread == NULL) {
-				//printf("[---] CreateRemoteThread unsuccessful. %d\n", GetLastError());
-				isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "CreateRemoteThread unsuccessful.")));
-				args.GetReturnValue().Set(Number::New(isolate, 0));
-				return;
-			}
-		}
-	}
-
-	CloseHandle(handle);
-	args.GetReturnValue().Set(Number::New(isolate, 1));
-}
-
-
-
-void WinProcess::InjectReflective(const FunctionCallbackInfo<Value>& args) {
  	Isolate* isolate = args.GetIsolate();  
  	HandleScope scope(isolate); 
     WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());
@@ -418,14 +372,37 @@ void WinProcess::InjectReflective(const FunctionCallbackInfo<Value>& args) {
 	args.GetReturnValue().Set(Boolean::New(isolate, false));
 }
 
-void WinProcess::getBaseAddress(const FunctionCallbackInfo<Value>& args) 
+void WinProcess::getBaseAddress32(const FunctionCallbackInfo<Value>& args) 
 {
     Isolate* isolate = Isolate::GetCurrent();
     HandleScope scope(isolate); 
     WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());
 	if(obj->_handle){
-		DWORD_PTR bAddr = GetProcessBaseAddress(obj->_handle);
-		args.GetReturnValue().Set(Number::New(isolate, bAddr));
+		
+		v8::String::Utf8Value param1(args[0]->ToString());
+		std::string processName = std::string(*param1);
+		
+		DWORD BaseAddr2 = GetModuleBase32(obj->_handle, processName);
+		args.GetReturnValue().Set(Number::New(isolate, (int)BaseAddr2));
+	}
+}
+
+void WinProcess::getBaseAddress64(const FunctionCallbackInfo<Value>& args) 
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate); 
+    WinProcess* obj = ObjectWrap::Unwrap<WinProcess>(args.Holder());
+	if(obj->_handle){
+		
+		v8::String::Utf8Value param1(args[0]->ToString());
+		std::string processName = std::string(*param1);
+		
+		UINT64 BaseAddr2 = GetModuleBase64(obj->_handle, processName);
+		char* OutputBuffer = new char[8];
+		memset(OutputBuffer, 0, 8);
+		memcpy(OutputBuffer, &BaseAddr2, sizeof(BaseAddr2));
+		
+		args.GetReturnValue().Set(Buffer::New(isolate, OutputBuffer, (size_t)8, myFree, NULL).ToLocalChecked());
 	}
 }
  
@@ -440,4 +417,63 @@ void WinProcess::Close(const FunctionCallbackInfo<Value>& args)
     }
 }
 
+
+/*
+
+//You read module information like this..
+MODULEENTRY32 GetModuleInfo(int ProcessID, const char* ModuleName)
+{
+    void* hSnap = nullptr;
+    MODULEENTRY32 Mod32 = {0};
+
+    if ((hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, ProcessID)) == INVALID_HANDLE_VALUE)
+        return Mod32;
+
+    Mod32.dwSize = sizeof(MODULEENTRY32);
+    while (Module32Next(hSnap, &Mod32))
+    {
+        if (!strcompare(ModuleName, Mod32.szModule, false))
+        {
+            CloseHandle(hSnap);
+            return Mod32;
+        }
+    }
+
+    CloseHandle(hSnap);
+    return Mod32;
+}
+
+DWORD GetModuleBaseAddress(DWORD iProcId, const char* DLLName)
+{
+	HANDLE hSnap; // Process snapshot handle.
+	MODULEENTRY32 xModule; // Module information structure.
+	hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, iProcId); // Creates a module
+	xModule.dwSize = sizeof(MODULEENTRY32); // Needed for Module32First/Next to work.
+
+	if (Module32First(hSnap, &xModule)) // Gets the first module.
+	{
+		if (strcmp(xModule.szModule, DLLName) == 0) // If this is the module we want...
+		{
+			CloseHandle(hSnap); // Free the handle.
+			return (DWORD)xModule.modBaseAddr; // return the base address.
+		}
+
+		while (Module32Next(hSnap, &xModule)) // Loops through the rest of the modules.
+		{
+			if (strcmp(xModule.szModule, DLLName) == 0) // If this is the module we want...
+			{
+				CloseHandle(hSnap); // Free the handle.
+
+				return (DWORD)xModule.modBaseAddr; // return the base address.
+
+			}
+		}
+	}
+
+	CloseHandle(hSnap); // Free the handle.
+
+	return 0; // If the result of the function is 0, it didn't find the base address.
+}
+
+*/
 NODE_MODULE(addon, WinProcess::Init)
